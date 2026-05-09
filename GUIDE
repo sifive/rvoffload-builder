@@ -1,0 +1,122 @@
+# How to build and run rvoffload on emulator
+
+Create a share folder for qemu to mount
+
+## Build rvoffload
+branch: dev/yunh/iree-demo-with-refactor-device (will merged into sifive-dev after review)
+
+git clone git@github.com:sifive/rvoffload.git
+cd rvoffload
+git submodule update --init
+rvoffload runtime
+cmake -B build-runtime-riscv -DRVO_LOG_DISABLE=ON -DCMAKE_TOOLCHAIN_FILE=../cmake/riscv.toolchain.cmake -DCMAKE_INSTALL_PREFIX=build-runtime-riscv/install .
+cmake --build build-runtime-riscv -j64 --target install
+
+The runtime/build-runtime-riscv/install/lib64/librvo.so should be copied to the qemu share folder.
+
+## rvoffload device daemon
+cmake -B build-device-riscv -DRVO_LOG_DISABLE=ON -DCMAKE_TOOLCHAIN_FILE=../cmake/riscv.toolchain.cmake -DCMAKE_INSTALL_PREFIX=build-device-riscv/install .
+cmake --build build-device-riscv -j64 --target install
+
+The device/build-device-riscv/install/bin/moray_daemonshould be copied to qemu share folder.
+
+
+## buildroot
+git clone git@github.com:buildroot/buildroot.git
+make qemu_riscv64_virt_defconfig
+
+Modified these config in .config
+# BR2_LINUX_KERNEL is not set
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_FULL=y
+# BR2_PACKAGE_HOST_QEMU is not set
+build
+make
+The toolchain is under output/host/bin/ and the cpio file is output/images/rootfs.cpio
+linux-private
+git clone git@github.com:sifive/linux-private.git -b dev/vincentc/v6.16-northstar
+cd linux-private
+
+make ARCH=riscv defconfig
+make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- CONFIG_INITRAMFS_SOURCE=<buildroot>/output/images/rootfs.cpio -j20
+
+
+The kernel image is build/arch/riscv/boot/Image
+
+## sifive_xm_accel
+Apply this patch before building: /nfs/teams/sw/share/yunh/share/rvoffload_tinyllama_test_material/sifive_xm_sync_memcpy.diff
+git clone git@github.com:sifive/sifive_xm_accel.git
+cd sifive_xm_accel
+
+make HOST=riscv DEV=riscv CROSS_COMPILE=riscv64-linux- KDIR=/scratch/yunh/projects/rvoffload/linux-private/build emulator_sock test
+make HOST=riscv DEV=riscv CROSS_COMPILE=riscv64-linux- KDIR=/scratch/yunh/projects/rvoffload/linux-private/build install
+
+The modules are under bins/modules .
+ host modules are
+sifive_xm.ko
+sifive_xm_emu_sock_host.ko
+The device modules are
+sifive_service.ko
+sifive_service_emu_sock_dev.ko
+These module should put to the qemu share folder (the share folder will describe in the launch qemu section).
+
+## IREE
+branch: dev/yunh/voffload-driver
+git clone git@github.com:sifive/iree-internal.git
+cd iree-internal
+git submodule update --init
+
+### build host
+cmake -G Ninja -B ./build/ -S . \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=./build/install \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_CXX_FLAGS="-stdlib=libc++  -Wno-align-mismatch" \
+    -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++  -Wno-align-mismatch  -fuse-ld=lld" \
+    -DIREE_ENABLE_RUNTIME_TRACING=ON \
+    -DLLVM_ENABLE_LLD=ON\
+    -DIREE_HAL_DRIVER_RVOFFLOAD_DEFAULT=ON \
+    -DIREE_EXTERNAL_HAL_DRIVERS=rvoffload \
+    .
+
+ionice -n 7 nice -n 19 cmake --build ./build/  --target install -j96
+
+### build runtime
+SIFIVE_TEST_TARGET=x392 cmake -GNinja -B ./build-riscv-x392/ \
+  -DCMAKE_TOOLCHAIN_FILE="./build_tools/cmake/riscv.toolchain.cmake" \
+  -DIREE_HOST_BIN_DIR="./build/install/bin" \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DRISCV_CPU=linux-riscv_64-sifive \
+  -DRISCV_TOOLCHAIN_ROOT="/sifive/tools/freedom-tools/toolsuite-linux/riscv64-unknown-linux-gnu-toolsuite-4.0.3-x86_64-linux-redhat8" \
+  -DIREE_BUILD_COMPILER=OFF \
+  -DIREE_ENABLE_CPUINFO=OFF \
+  -DCMAKE_SKIP_RPATH=TRUE \
+  -DIREE_HAL_DRIVER_RVOFFLOAD_DEFAULT=ON \
+  -DIREE_EXTERNAL_HAL_DRIVERS=rvoffload \
+  -DIREE_TARGET_BACKEND_CUDA=OFF -DIREE_TARGET_BACKEND_METAL_SPIRV=OFF -DIREE_TARGET_BACKEND_ROCM=OFF -DIREE_TARGET_BACKEND_VULKAN_SPIRV=OFF -DIREE_TARGET_BACKEND_WEBGPU_SPIRV=OFF -DIREE_HAL_DRIVER_CUDA=OFF -DIREE_HAL_DRIVER_HIP=OFF -DIREE_HAL_DRIVER_METAL=OFF -DIREE_HAL_DRIVER_VULKAN=OFF -DIREE_BUILD_ALL_CHECK_TEST_MODULES=OFF \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  .
+
+SIFIVE_TEST_TARGET=x392 VERBOSE=1 cmake --build ./build-riscv-x392/ -j32
+
+
+The build-riscv-x392/tools/iree-run-module should also be copied to the qemu shared folder.
+
+## Compile VMFB (optional)
+The mlir is /nfs/teams/sw/share/yunh/share/rvoffload_tinyllama_test_material/TinyLLama-i4f16-opt-tw.mlir.
+Compile command:
+
+		 			 			 		 		./build/install/bin/iree-compile \
+--output-format=vm-bytecode \
+--mlir-print-op-on-diagnostic=false \
+TinyLLama-i4f16-opt-tw.mlir \
+-o TinyLLama-i4f16-opt-tw_x280o.vmfb \
+--iree-llvmcpu-target-abi=lp64d \
+--iree-llvmcpu-target-triple=riscv64-pc-linux-gnu \
+--iree-llvmcpu-target-cpu=sifive-x280o \
+--iree-llvmcpu-target-cpu-features=+m,+a,+f,+d,+c,+v,+zba,+zbb,+zfh,+zvfh,+zvl512b \
+--riscv-v-fixed-length-vector-lmul-max=8 \
+--iree-hal-target-backends=llvm-cpu
+	
+

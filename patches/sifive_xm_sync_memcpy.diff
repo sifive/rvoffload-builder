@@ -1,0 +1,20 @@
+diff --git a/host/sifive_xm/sifive_xm_message.c b/host/sifive_xm/sifive_xm_message.c
+index 258b74c..db2ccb8 100644
+--- a/host/sifive_xm/sifive_xm_message.c
++++ b/host/sifive_xm/sifive_xm_message.c
+@@ -9,7 +9,7 @@
+ #include "sifive_xm_drm.h"
+ #include "sifive_xm_message.h"
+ 
+-#define MSG_TIMEOUT_MS 500
++#define MSG_TIMEOUT_MS 5000000
+ 
+ struct sifive_xm_msg_ret {
+ 	struct completion wait;
+@@ -170,5 +170,5 @@ int sifive_xm_msg_memcpy(struct sifive_xm_drm_dev *sfdev, struct drm_sifive_memc
+ 	memcpy(msg + sizeof(struct sifive_drm_msg_hdr), memcpy_info,
+ 	       sizeof(struct drm_sifive_memcpy));
+ 
+-	return sifive_xm_msg_send(sfdev, msg, msg_size, false);
++	return sifive_xm_msg_send(sfdev, msg, msg_size, true);
+ }

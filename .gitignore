@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Cloned repos and build outputs (large, not tracked)
+rvoffload/
+buildroot/
+linux-private/
+sifive_xm_accel/
+iree-internal/
+share/
+
+# Build logs
+*.log
+
+# Editor
+.cache/

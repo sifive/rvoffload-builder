@@ -1,0 +1,4 @@
+modules: clang/17.0.4 ninja cmake python/python/3.14.2
+toolchain: module load sifive/freedom-tools/toolsuite-linux/5.0.0
+you can use uv to setup an venv and install numpy if required during building IREE
+
