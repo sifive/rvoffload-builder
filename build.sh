@@ -16,6 +16,11 @@ source /etc/profile.d/modules.sh
 BASE_DIR=$(pwd)
 SHARE_DIR=$BASE_DIR/share
 
+# ─── Logging ───────────────────────────────────────────────────────────────────
+mkdir -p "$BASE_DIR/logs"
+LOG_FILE="$BASE_DIR/logs/build.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 TOOLCHAIN_ROOT=/sifive/tools/freedom-tools/toolsuite-linux/riscv64-unknown-linux-gnu-toolsuite-5.0.0-x86_64-linux-redhat8
 CROSS_COMPILE=riscv64-unknown-linux-gnu-
 
@@ -31,9 +36,6 @@ info() { echo "  → $*"; }
 do_clean() {
     local remove_repos="${1:-no}"
     step "Cleaning build artifacts"
-
-    info "Removing share/..."
-    rm -rf "$SHARE_DIR"
 
     info "Removing rvoffload build dirs..."
     rm -rf "$BASE_DIR/rvoffload/runtime/build-runtime-riscv"
@@ -103,14 +105,12 @@ info "numpy: $(python -c 'import numpy; print(numpy.__version__)')"
 mkdir -p "$SHARE_DIR"
 
 # ─── 1. rvoffload ──────────────────────────────────────────────────────────────
-step "1/5  rvoffload"
+step "1/6  rvoffload"
 cd "$BASE_DIR"
 
 if [ ! -d rvoffload ]; then
     git clone git@github.com:sifive/rvoffload.git
     cd rvoffload
-    git checkout dev/yunh/iree-demo-with-refactor-device 2>/dev/null \
-        || info "Branch not found, staying on default"
     git submodule update --init
 else
     info "rvoffload already cloned, skipping clone"
@@ -145,7 +145,7 @@ cp build-device-riscv/install/bin/moray_daemon "$SHARE_DIR/"
 info "Copied moray_daemon → share/"
 
 # ─── 2. buildroot ──────────────────────────────────────────────────────────────
-step "2/5  buildroot"
+step "2/6  buildroot"
 cd "$BASE_DIR"
 
 if [ ! -d buildroot ]; then
@@ -187,7 +187,7 @@ ROOTFS_CPIO="$BASE_DIR/buildroot/output/images/rootfs.cpio"
 info "rootfs.cpio: $ROOTFS_CPIO"
 
 # ─── 3. linux-private ──────────────────────────────────────────────────────────
-step "3/5  linux-private"
+step "3/6  linux-private"
 cd "$BASE_DIR"
 
 if [ ! -d linux-private ]; then
@@ -220,7 +220,7 @@ cp "$LINUX_BUILD/arch/riscv/boot/Image" "$SHARE_DIR/"
 info "Copied Image → share/"
 
 # ─── 4. sifive_xm_accel ────────────────────────────────────────────────────────
-step "4/5  sifive_xm_accel"
+step "4/6  sifive_xm_accel"
 cd "$BASE_DIR"
 
 if [ ! -d sifive_xm_accel ]; then
@@ -252,7 +252,7 @@ for ko in sifive_xm.ko sifive_xm_emu_sock_host.ko sifive_service.ko sifive_servi
 done
 
 # ─── 5. IREE ───────────────────────────────────────────────────────────────────
-step "5/5  IREE"
+step "5/6  IREE"
 cd "$BASE_DIR"
 
 if [ ! -d iree-internal ]; then
@@ -314,6 +314,24 @@ SIFIVE_TEST_TARGET=x392 VERBOSE=1 cmake --build ./build-riscv-x392/ -j32
 
 cp ./build-riscv-x392/tools/iree-run-module "$SHARE_DIR/"
 info "Copied iree-run-module → share/"
+
+# ─── 6. Compile VMFB ──────────────────────────────────────────────────────────
+step "6/6  Compile VMFB"
+cd "$BASE_DIR"
+
+info "Compiling MLIR → VMFB..."
+"$BASE_DIR/iree-internal/build/install/bin/iree-compile" \
+    --output-format=vm-bytecode \
+    --mlir-print-op-on-diagnostic=false \
+    "/nfs/teams/sw/share/yunh/share/rvoffload_tinyllama_test_material/TinyLLama-i4f16-opt-tw.mlir" \
+    -o "$SHARE_DIR/TinyLLama-i4f16-opt-tw_x280o.vmfb" \
+    --iree-llvmcpu-target-abi=lp64d \
+    --iree-llvmcpu-target-triple=riscv64-pc-linux-gnu \
+    --iree-llvmcpu-target-cpu=sifive-x280o \
+    --iree-llvmcpu-target-cpu-features=+m,+a,+f,+d,+c,+v,+zba,+zbb,+zfh,+zvfh,+zvl512b \
+    --riscv-v-fixed-length-vector-lmul-max=8 \
+    --iree-hal-target-backends=llvm-cpu
+info "Compiled TinyLLama-i4f16-opt-tw_x280o.vmfb → share/"
 
 # ─── Done ──────────────────────────────────────────────────────────────────────
 step "Build complete!"
